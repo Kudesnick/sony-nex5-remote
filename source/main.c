@@ -3,6 +3,19 @@
 
 #include "stm32f10x.h"
 
+
+#define CMD_SHUTTER   0x2D
+#define CMD_2S        0x37
+#define CMD_STARTSTOP 0x48
+#define ADDR          0x1E3A
+#define ONE_PULSE     25 // один импульс таймера, если принимаем, что частота ШИМ - 40 кГц
+#define TM_ZERO       (600   / ONE_PULSE)
+#define TM_MUTE       (600   / ONE_PULSE)
+#define TM_ONE        (1200  / ONE_PULSE)
+#define TM_START      (2400  / ONE_PULSE)
+#define TM_REPEAT     (20000 / ONE_PULSE)
+
+
 #define PORT_GLED GPIOC
 #define PIN_GLED 13
 #define PORT_IRLED GPIOA
@@ -134,20 +147,9 @@ int main()
     // Бесконечно
     for (;;)
     {
-        __WFI();
+        //__WFI();
     }
 }
-
-#define CMD_SHUTTER   0x2D
-#define CMD_2S        0x37
-#define CMD_STARTSTOP 0x48
-#define ADDR          0x1E3A
-#define ONE_PULSE     25 // один импульс таймера, если принимаем, что частота ШИМ - 40 кГц
-#define TM_ZERO       (600   / ONE_PULSE)
-#define TM_MUTE       (600   / ONE_PULSE)
-#define TM_ONE        (1200  / ONE_PULSE)
-#define TM_START      (2400  / ONE_PULSE)
-#define TM_REPEAT     (11000 / ONE_PULSE)
 
 uint32_t cmd_first;
 uint32_t cmd_repeat;
@@ -177,8 +179,8 @@ static inline void keybrd(void)
     {
         if (curr && !push)
         {
-            cmd_first  = (ADDR << 8) | curr;
-            cmd_repeat = (ADDR << 8) | curr;
+            cmd_first  = (ADDR << 7) | curr;
+            cmd_repeat = (ADDR << 7) | curr;
             delay      = TM_START + TM_MUTE;
             IRLED_ON();
             repeat     = 1;
