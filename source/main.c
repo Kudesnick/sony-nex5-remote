@@ -45,9 +45,34 @@ typedef enum
     GPIO_IN_PULL        = 0x02, ///< alternate function push-pull
 } GPIO_CONF;
 
-#define CONF_CLR(pin) (0xF << ((pin) << 2))
-#define CONF_SET(pin, conf) ((((conf) << 2) | GPIO_MODE_OUT50MHZ) << ((pin) << 2))
-#define CONF_SET_IN(pin, conf) ((((conf) << 2) | GPIO_MODE_INPUT) << ((pin) << 2))
+static inline void CONF_CLR(GPIO_TypeDef *port, uint32_t pin)
+{
+    *((pin < 8) ? &port->CRL : &port->CRH) &= ~(0xF << ((pin % 8) << 2));
+}
+
+static inline void CONF_SET_OUT(GPIO_TypeDef *port, uint32_t pin, GPIO_CONF conf)
+{
+    CONF_CLR(port, pin);
+    *((pin < 8) ? &port->CRL : &port->CRH) |= ((((conf) << 2) | GPIO_MODE_OUT50MHZ) << ((pin % 8) << 2));
+}
+
+static inline void CONF_SET_IN(GPIO_TypeDef *port, uint32_t pin, GPIO_CONF conf)
+{
+    CONF_CLR(port, pin);
+    *((pin < 8) ? &port->CRL : &port->CRH) |= ((((conf) << 2) | GPIO_MODE_INPUT) << ((pin % 8) << 2));
+}
+
+static inline void IRLED_ON(void)
+{
+    PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
+    PORT_GLED->BRR  = (1UL << PIN_GLED);
+}
+
+static inline void IRLED_OFF(void)
+{
+    PORT_IRLED->BRR = (1UL << PIN_IRLED_CTL);
+    PORT_GLED->BSRR  = (1UL << PIN_GLED);
+}
 
 /// @brief Основная функция
 int main()
@@ -55,86 +80,62 @@ int main()
     // GPIO init
     RCC->APB2ENR |= RCC_APB2ENR_AFIOEN | RCC_APB2ENR_IOPCEN;
 
-    PORT_GLED->CRH &= ~(CONF_CLR(PIN_GLED - 8));
-    PORT_GLED->CRH |= CONF_SET(PIN_GLED - 8, GPIO_OUT_OPENDRAIN);
-    PORT_GLED->BSRR = (1UL << PIN_GLED);
+    CONF_SET_OUT(PORT_GLED, PIN_GLED, GPIO_OUT_OPENDRAIN);
 
     // https://hubstub.ru/stm32/81-stm32-shim.html
 
     // Тактирование  GPIOA , TIM1, альтернативных функций порта
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_AFIOEN;
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_AFIOEN;
 
     //PA11 push-pull
-    PORT_IRLED->CRH &= ~(CONF_CLR(PIN_IRLED - 8));
-    PORT_IRLED->CRH |= CONF_SET(PIN_IRLED - 8, GPIO_AF_PUSHPULL);
-    
-    PORT_IRLED->CRH &= ~(CONF_CLR(PIN_IRLED_CTL - 8));
-    PORT_IRLED->CRH |= CONF_SET(PIN_IRLED_CTL - 8, GPIO_OUT_PUSH_PULL);
-    PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
+    CONF_SET_OUT(PORT_IRLED, PIN_IRLED, GPIO_AF_PUSHPULL);
 
-	//делитель
-	TIM1->PSC = 7999;
-	//значение перезагрузки
-    TIM1->ARR = 1000;
-	//коэф. заполнения
-	TIM1->CCR4 = 1;
-	//делитель
+    CONF_SET_OUT(PORT_IRLED, PIN_IRLED_CTL, GPIO_OUT_PUSH_PULL);
+
+    IRLED_OFF();
+
 #if (0)
-	TIM1->PSC = 49 * 16;
+    TIM1->PSC = 49 * 16; //делитель
 #else
-	TIM1->PSC = 49;
+    TIM1->PSC = 49; //делитель
 #endif
-	//значение перезагрузки
-    TIM1->ARR = 3;
-	//коэф. заполнения
-	TIM1->CCR4 = 1;
-	//настроим на выход канал 4, активный уровень низкий 
-	TIM1->CCER |= TIM_CCER_CC4E | TIM_CCER_CC4P;
-	//разрешим использовать выводы таймера как выходы
-	TIM1->BDTR |= TIM_BDTR_MOE;
-	//PWM mode 1, прямой ШИМ 4 канал
-    TIM1->CCMR2 = TIM_CCMR2_OC4M_2 | TIM_CCMR2_OC4M_1;
-	//считаем вверх, выравнивание по фронту, Fast PWM
-	TIM1->CR1 &= ~(TIM_CR1_DIR | TIM_CR1_CMS);
-    
+    TIM1->ARR = 3; //значение перезагрузки
+    TIM1->CCR4 = 1; //коэф. заполнения
+    TIM1->CCER |= TIM_CCER_CC4E | TIM_CCER_CC4P; //настроим на выход канал 4, активный уровень низкий
+    TIM1->BDTR |= TIM_BDTR_MOE; //разрешим использовать выводы таймера как выходы
+    TIM1->CCMR2 = TIM_CCMR2_OC4M_2 | TIM_CCMR2_OC4M_1; //PWM mode 1, прямой ШИМ 4 канал
+    TIM1->CR1 &= ~(TIM_CR1_DIR | TIM_CR1_CMS); //считаем вверх, выравнивание по фронту, Fast PWM
     TIM1->DIER |= TIM_DIER_UIE;
-    
     NVIC_EnableIRQ(TIM1_UP_IRQn);
-    
     __enable_irq();
+    TIM1->CR1 |= TIM_CR1_CEN; //включаем счётчик
 
-	//включаем счётчик
-	TIM1->CR1 |= TIM_CR1_CEN;
-    
     // Инициализация кнопок
     RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN;
-    
-    BTN0_PORT0->CRL &= ~(CONF_CLR(BTN0_PIN0));
-    BTN0_PORT0->CRL |= CONF_SET(BTN0_PIN0, GPIO_OUT_OPENDRAIN);
+
+    CONF_SET_OUT(BTN0_PORT0, BTN0_PIN0, GPIO_OUT_OPENDRAIN);
     BTN0_PORT0->BRR = (1UL << BTN0_PIN0);
 
-    BTN1_PORT0->CRL &= ~(CONF_CLR(BTN1_PIN0));
-    BTN1_PORT0->CRL |= CONF_SET(BTN1_PIN0, GPIO_OUT_OPENDRAIN);
+    CONF_SET_OUT(BTN1_PORT0, BTN1_PIN0, GPIO_OUT_OPENDRAIN);
     BTN1_PORT0->BRR = (1UL << BTN1_PIN0);
 
-    BTN2_PORT0->CRH &= ~(CONF_CLR(BTN2_PIN0 - 8));
-    BTN2_PORT0->CRH |= CONF_SET(BTN2_PIN0 - 8, GPIO_OUT_OPENDRAIN);
+    CONF_SET_OUT(BTN2_PORT0, BTN2_PIN0, GPIO_OUT_OPENDRAIN);
     BTN2_PORT0->BRR = (1UL << BTN2_PIN0);
 
-    BTN0_PORT1->CRH &= ~(CONF_CLR(BTN0_PIN1 - 8));
-    BTN0_PORT1->CRH |= CONF_SET_IN(BTN0_PIN1 - 8, GPIO_IN_PULL);
+    CONF_SET_IN(BTN0_PORT1, BTN0_PIN1, GPIO_IN_PULL);
     BTN0_PORT1->ODR |= 1UL << BTN0_PIN1;
 
-    BTN1_PORT1->CRL &= ~(CONF_CLR(BTN1_PIN1));
-    BTN1_PORT1->CRL |= CONF_SET_IN(BTN1_PIN1, GPIO_IN_PULL);
+    CONF_SET_IN(BTN1_PORT1, BTN1_PIN1, GPIO_IN_PULL);
     BTN1_PORT1->ODR |= 1UL << BTN1_PIN1;
 
-    BTN2_PORT1->CRL &= ~(CONF_CLR(BTN2_PIN1));
-    BTN2_PORT1->CRL |= CONF_SET_IN(BTN2_PIN1, GPIO_IN_PULL);
+    CONF_SET_IN(BTN2_PORT1, BTN2_PIN1, GPIO_IN_PULL);
     BTN2_PORT1->ODR |= 1UL << BTN2_PIN1;
 
     // Бесконечно
-    for (;;)/*__WFI*/;
+    for (;;)
+    {
+        __WFI();
+    }
 }
 
 #define CMD_SHUTTER   0x2D
@@ -158,7 +159,7 @@ static inline void keybrd(void)
     static uint32_t prev = 0;
     static uint32_t push = 0;
     uint32_t curr = 0;
-    
+
     if ((BTN0_PORT1->IDR & (1 << BTN0_PIN1)) == 0)
     {
         curr = CMD_SHUTTER;
@@ -171,7 +172,7 @@ static inline void keybrd(void)
     {
         curr = CMD_STARTSTOP;
     }
-    
+
     if (prev == curr)
     {
         if (curr && !push)
@@ -179,8 +180,7 @@ static inline void keybrd(void)
             cmd_first  = (ADDR << 8) | curr;
             cmd_repeat = (ADDR << 8) | curr;
             delay      = TM_START + TM_MUTE;
-            PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
-            PORT_GLED->BSRR = (1UL << PIN_GLED);
+            IRLED_ON();
             repeat     = 1;
 
             push = 1;
@@ -202,8 +202,7 @@ void TIM1_UP_IRQHandler(void)
 
     if (delay == TM_MUTE)
     {
-        PORT_IRLED->BRR = (1UL << PIN_IRLED_CTL);
-        PORT_GLED->BSRR = (1UL << PIN_GLED);
+        IRLED_OFF();
 
         if (!cmd_repeat && cmd_first)
         {
@@ -221,8 +220,7 @@ void TIM1_UP_IRQHandler(void)
             if (repeat)
             {
                 delay = TM_START + TM_MUTE;
-                PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
-                PORT_GLED->BSRR = (1UL << PIN_GLED);
+                IRLED_ON();
                 repeat = 0;
                 return;
             }
@@ -237,12 +235,8 @@ void TIM1_UP_IRQHandler(void)
         }
 
         delay = (cmd_repeat & 1) ? TM_ONE + TM_MUTE : TM_ZERO + TM_MUTE;
-        PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
-        PORT_GLED->BRR  = (1UL << PIN_GLED);
+        IRLED_ON();
 
         cmd_repeat >>= 1;
     }
-
-    // PORT_GLED->BSRR = (1UL << PIN_GLED);
-    // PORT_GLED->BRR  = (1UL << PIN_GLED);
 }
