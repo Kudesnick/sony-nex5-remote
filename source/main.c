@@ -57,6 +57,7 @@ int main()
 
     PORT_GLED->CRH &= ~(CONF_CLR(PIN_GLED - 8));
     PORT_GLED->CRH |= CONF_SET(PIN_GLED - 8, GPIO_OUT_OPENDRAIN);
+    PORT_GLED->BSRR = (1UL << PIN_GLED);
 
     // https://hubstub.ru/stm32/81-stm32-shim.html
 
@@ -65,27 +66,28 @@ int main()
 
     //PA11 push-pull
     PORT_IRLED->CRH &= ~(CONF_CLR(PIN_IRLED - 8));
-    PORT_IRLED->CRH |= CONF_SET(PIN_IRLED - 8, GPIO_AF_OPENDRAIN);
+    PORT_IRLED->CRH |= CONF_SET(PIN_IRLED - 8, GPIO_AF_PUSHPULL);
     
     PORT_IRLED->CRH &= ~(CONF_CLR(PIN_IRLED_CTL - 8));
     PORT_IRLED->CRH |= CONF_SET(PIN_IRLED_CTL - 8, GPIO_OUT_PUSH_PULL);
     PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
 
-#if (0)
 	//делитель
 	TIM1->PSC = 7999;
 	//значение перезагрузки
     TIM1->ARR = 1000;
 	//коэф. заполнения
 	TIM1->CCR4 = 1;
-#else
 	//делитель
-	TIM1->PSC = 49/* * 16*/;
+#if (0)
+	TIM1->PSC = 49 * 16;
+#else
+	TIM1->PSC = 49;
+#endif
 	//значение перезагрузки
-    TIM1->ARR = 4;
+    TIM1->ARR = 3;
 	//коэф. заполнения
 	TIM1->CCR4 = 1;
-#endif
 	//настроим на выход канал 4, активный уровень низкий 
 	TIM1->CCER |= TIM_CCER_CC4E | TIM_CCER_CC4P;
 	//разрешим использовать выводы таймера как выходы
@@ -132,7 +134,7 @@ int main()
     BTN2_PORT1->ODR |= 1UL << BTN2_PIN1;
 
     // Бесконечно
-    for (;;)__WFI();
+    for (;;)/*__WFI*/;
 }
 
 #define CMD_SHUTTER   0x2D
@@ -146,10 +148,53 @@ int main()
 #define TM_START      (2400  / ONE_PULSE)
 #define TM_REPEAT     (11000 / ONE_PULSE)
 
-uint32_t cmd_first  = (ADDR << 8) | CMD_SHUTTER;
-uint32_t cmd_repeat = (ADDR << 8) | CMD_SHUTTER;
-uint32_t delay      = TM_START + TM_MUTE;
-uint32_t repeat     = 1;
+uint32_t cmd_first;
+uint32_t cmd_repeat;
+uint32_t delay = TM_REPEAT;
+uint32_t repeat;
+
+static inline void keybrd(void)
+{
+    static uint32_t prev = 0;
+    static uint32_t push = 0;
+    uint32_t curr = 0;
+    
+    if ((BTN0_PORT1->IDR & (1 << BTN0_PIN1)) == 0)
+    {
+        curr = CMD_SHUTTER;
+    }
+    if ((BTN1_PORT1->IDR & (1 << BTN1_PIN1)) == 0)
+    {
+        curr = CMD_2S;
+    }
+    if ((BTN2_PORT1->IDR & (1 << BTN2_PIN1)) == 0)
+    {
+        curr = CMD_STARTSTOP;
+    }
+    
+    if (prev == curr)
+    {
+        if (curr && !push)
+        {
+            cmd_first  = (ADDR << 8) | curr;
+            cmd_repeat = (ADDR << 8) | curr;
+            delay      = TM_START + TM_MUTE;
+            PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
+            PORT_GLED->BSRR = (1UL << PIN_GLED);
+            repeat     = 1;
+
+            push = 1;
+        }
+        else if (!curr)
+        {
+            push = 0;
+        }
+    }
+    else
+    {
+        prev = curr;
+    }
+}
 
 void TIM1_UP_IRQHandler(void)
 {
@@ -158,6 +203,7 @@ void TIM1_UP_IRQHandler(void)
     if (delay == TM_MUTE)
     {
         PORT_IRLED->BRR = (1UL << PIN_IRLED_CTL);
+        PORT_GLED->BSRR = (1UL << PIN_GLED);
 
         if (!cmd_repeat && cmd_first)
         {
@@ -176,6 +222,7 @@ void TIM1_UP_IRQHandler(void)
             {
                 delay = TM_START + TM_MUTE;
                 PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
+                PORT_GLED->BSRR = (1UL << PIN_GLED);
                 repeat = 0;
                 return;
             }
@@ -183,27 +230,15 @@ void TIM1_UP_IRQHandler(void)
             {
                 delay = TM_REPEAT;
                 // Ожидаем ввода команды
-                {
-                    if ((BTN0_PORT1->IDR & (uint16_t)(1 << BTN0_PIN1)) == 0)
-                    {
-                        __NOP();
-                    }
-                    if ((BTN1_PORT1->IDR & (uint16_t)(1 << BTN1_PIN1)) == 0)
-                    {
-                        __NOP();
-                    }
-                    if ((BTN2_PORT1->IDR & (uint16_t)(1 << BTN2_PIN1)) == 0)
-                    {
-                        __NOP();
-                    }
-                }
-                
+                keybrd();
+
                 return;
             }
         }
 
         delay = (cmd_repeat & 1) ? TM_ONE + TM_MUTE : TM_ZERO + TM_MUTE;
         PORT_IRLED->BSRR = (1UL << PIN_IRLED_CTL);
+        PORT_GLED->BRR  = (1UL << PIN_GLED);
 
         cmd_repeat >>= 1;
     }
