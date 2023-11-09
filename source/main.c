@@ -14,7 +14,7 @@
 #define TM_ONE        (1200  / ONE_PULSE)
 #define TM_START      (2400  / ONE_PULSE)
 #define TM_REPEAT     (45000 / ONE_PULSE)
-#define REPEAT_LIM    (3)
+#define REPEAT_LIM    (4)
 
 // Назначение пинов
 #define PORT_GLED GPIOC
@@ -148,7 +148,7 @@ int main()
     // Бесконечно
     for (;;)
     {
-        //__WFI();
+        __WFI();
     }
 }
 
