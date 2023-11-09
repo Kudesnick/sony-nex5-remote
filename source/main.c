@@ -3,19 +3,20 @@
 
 #include "stm32f10x.h"
 
-
+// Коды команд и тайминги протокола
 #define CMD_SHUTTER   0x2D
 #define CMD_2S        0x37
 #define CMD_STARTSTOP 0x48
 #define ADDR          0x1E3A
 #define ONE_PULSE     25 // один импульс таймера, если принимаем, что частота ШИМ - 40 кГц
-#define TM_ZERO       (600   / ONE_PULSE)
 #define TM_MUTE       (600   / ONE_PULSE)
+#define TM_ZERO       (600   / ONE_PULSE)
 #define TM_ONE        (1200  / ONE_PULSE)
 #define TM_START      (2400  / ONE_PULSE)
-#define TM_REPEAT     (20000 / ONE_PULSE)
+#define TM_REPEAT     (45000 / ONE_PULSE)
+#define REPEAT_LIM    (3)
 
-
+// Назначение пинов
 #define PORT_GLED GPIOC
 #define PIN_GLED 13
 #define PORT_IRLED GPIOA
@@ -151,10 +152,18 @@ int main()
     }
 }
 
-uint32_t cmd_first;
-uint32_t cmd_repeat;
-uint32_t delay = TM_REPEAT;
-uint32_t repeat;
+uint32_t cmd_curr;
+uint32_t cmd_ops;
+uint32_t delay_data;
+uint32_t repeat_cnt;
+
+static inline void start(typeof(repeat_cnt) repeat)
+{
+    cmd_ops = (ADDR << 7) | cmd_curr;
+    repeat_cnt = repeat;
+    delay_data = TM_START + TM_MUTE;
+    IRLED_ON();
+}
 
 static inline void keybrd(void)
 {
@@ -177,68 +186,53 @@ static inline void keybrd(void)
 
     if (prev == curr)
     {
-        if (curr && !push)
+        static uint32_t push = 0;
+        
+        if (curr)
         {
-            cmd_first  = (ADDR << 7) | curr;
-            cmd_repeat = (ADDR << 7) | curr;
-            delay      = TM_START + TM_MUTE;
-            IRLED_ON();
-            repeat     = 1;
-
-            push = 1;
+            if (!push)
+            {
+                push = 1;
+                cmd_curr = curr;
+                start(REPEAT_LIM - 1);
+            }
         }
-        else if (!curr)
-        {
+        else
             push = 0;
-        }
     }
-    else
-    {
-        prev = curr;
-    }
+    prev = curr;
 }
 
 void TIM1_UP_IRQHandler(void)
 {
     TIM1->SR &= ~TIM_SR_UIF;
 
-    if (delay == TM_MUTE)
+    static uint32_t delay_repeat = TM_REPEAT;
+
+    if (--delay_repeat == 0)
+    {
+        delay_repeat = TM_REPEAT;
+
+        if (repeat_cnt)
+            start(repeat_cnt - 1);
+        else
+            keybrd();
+    }
+
+    if (delay_data == TM_MUTE)
     {
         IRLED_OFF();
-
-        if (!cmd_repeat && cmd_first)
-        {
-            cmd_repeat = cmd_first;
-            cmd_first = 0;
-            delay = TM_REPEAT;
-            repeat = 1;
-        }
     }
 
-    if (--delay == 0)
+    if (!delay_data)
     {
-        if (!cmd_first)
+        if (cmd_ops)
         {
-            if (repeat)
-            {
-                delay = TM_START + TM_MUTE;
-                IRLED_ON();
-                repeat = 0;
-                return;
-            }
-            else if (!cmd_repeat)
-            {
-                delay = TM_REPEAT;
-                // Ожидаем ввода команды
-                keybrd();
-
-                return;
-            }
+            delay_data = ((cmd_ops & 1) ? TM_ONE : TM_ZERO) + TM_MUTE;
+            cmd_ops >>= 1;
+            IRLED_ON();
         }
-
-        delay = (cmd_repeat & 1) ? TM_ONE + TM_MUTE : TM_ZERO + TM_MUTE;
-        IRLED_ON();
-
-        cmd_repeat >>= 1;
     }
+    else
+        delay_data--;
 }
